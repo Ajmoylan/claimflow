@@ -79,9 +79,15 @@ app.UseStaticFiles();
 app.UseRateLimiter();
 
 app.MapOpenApi();
+// Keep the docs page self-contained: no external fonts, telemetry, AI agent, MCP or "deploy" promos.
 app.MapScalarApiReference("/docs", scalar => scalar
     .WithTitle("CLAIMFLOW API")
-    .DisableDefaultFonts());
+    .DisableDefaultFonts()
+    .DisableTelemetry()
+    .DisableAgent()
+    .DisableMcp()
+    .HideDeveloperTools()
+    .HideClientButton());
 
 app.MapControllers();
 app.MapHealthChecks("/health");
