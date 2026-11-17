@@ -29,6 +29,8 @@ Prices are Microsoft retail list prices for France Central in NOK, from the Azur
   - Billing per active second is at least the 0.5 vCore minimum, so the allowance is about **55 active
     hours per month**. Every visit keeps the database awake for its own length plus 15 minutes, so that is
     roughly **150–200 visits a month** before the allowance is used up.
+  - The app releases its pooled SQL connections after 2 idle minutes, so the database can start its 15-minute
+    pause countdown without waiting for ADO.NET's 4–8 minute pool cleanup.
   - With `freeLimitExhaustionBehavior: AutoPause` (the proposed setting), **nothing is billed**. If the
     allowance runs out, the database stays paused until the 1st of the next month, and the demo shows a
     "could not complete the request" error until then.
