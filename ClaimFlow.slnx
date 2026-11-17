@@ -1,0 +1,9 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/ClaimFlow.Api/ClaimFlow.Api.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/ClaimFlow.IntegrationTests/ClaimFlow.IntegrationTests.csproj" />
+    <Project Path="tests/ClaimFlow.UnitTests/ClaimFlow.UnitTests.csproj" />
+  </Folder>
+</Solution>
