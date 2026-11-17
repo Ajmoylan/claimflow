@@ -18,8 +18,8 @@ env:
   DOTNET_CLI_TELEMETRY_OPTOUT: true
 
 jobs:
+  # Job IDs double as the required status-check names in the protect-main ruleset.
   backend:
-    name: Backend (build, format, tests on SQLite)
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -59,7 +59,6 @@ jobs:
           retention-days: 14
 
   backend-sqlserver:
-    name: Integration tests on SQL Server (container)
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -82,7 +81,6 @@ jobs:
           retention-days: 14
 
   frontend:
-    name: Frontend (format, lint, types, tests, build)
     runs-on: ubuntu-24.04
     defaults:
       run:
@@ -108,7 +106,6 @@ jobs:
         run: npm audit || echo "::warning::npm audit reported issues in development dependencies (see log)"
 
   package:
-    name: Package deployable app
     needs: [backend, backend-sqlserver, frontend]
     runs-on: ubuntu-24.04
     steps:
