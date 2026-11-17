@@ -328,6 +328,9 @@ Switzerland North for this subscription.
 After the first deployment, the app's identity is granted database access once with
 [`infra/grant-app-db-access.sql`](infra/grant-app-db-access.sql).
 
+The exact deployment procedure, cost breakdown, free-tier limits and teardown are in
+[`infra/DEPLOYMENT.md`](infra/DEPLOYMENT.md).
+
 ## Security and demo safety
 
 The public demo is anonymous, so it is built to be hard to abuse and impossible to damage permanently:
