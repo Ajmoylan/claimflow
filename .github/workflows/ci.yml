@@ -135,3 +135,50 @@ jobs:
           name: claimflow-app
           path: publish
           retention-days: 7
+
+  # Deploys the artifact built and tested earlier in this same run, so nothing produced by another
+  # workflow run is ever deployed. Inert until the Azure repository variables exist:
+  #   AZURE_CLIENT_ID, AZURE_TENANT_ID, AZURE_SUBSCRIPTION_ID (GitHub OIDC app registration; IDs, not secrets)
+  #   AZURE_WEBAPP_NAME
+  deploy:
+    needs: [package]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && vars.AZURE_WEBAPP_NAME != ''
+    runs-on: ubuntu-24.04
+    environment:
+      name: production
+      url: https://${{ vars.AZURE_WEBAPP_NAME }}.azurewebsites.net
+    permissions:
+      contents: read
+      id-token: write # GitHub OIDC token for Azure login (no stored credentials)
+    concurrency:
+      group: deploy-production
+      cancel-in-progress: false
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: claimflow-app
+          path: publish
+      - name: Azure login (OIDC)
+        uses: azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906 # v3.1.0
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+      - name: Deploy
+        uses: azure/webapps-deploy@02a81bead70021f5284939794bcec79c271ab383 # v3.0.8
+        with:
+          app-name: ${{ vars.AZURE_WEBAPP_NAME }}
+          package: publish
+      - name: Smoke test
+        env:
+          APP_URL: https://${{ vars.AZURE_WEBAPP_NAME }}.azurewebsites.net
+        run: |
+          # The free tier and a paused database can take a minute to wake up.
+          for attempt in $(seq 1 12); do
+            if curl --fail --silent --max-time 30 "$APP_URL/health" | grep -q Healthy &&
+               curl --fail --silent --max-time 30 "$APP_URL/api/dashboard/summary" > /dev/null; then
+              echo "Smoke test passed"; exit 0
+            fi
+            echo "Attempt $attempt: not ready yet"; sleep 15
+          done
+          echo "::error::Smoke test failed"; exit 1

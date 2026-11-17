@@ -11,10 +11,17 @@ updates:
       # Stay on the .NET 10 LTS line; major upgrades are deliberate, reviewed changes.
       - dependency-name: 'Microsoft.*'
         update-types: ['version-update:semver-major']
+      # The EF Core CLI must match the EF Core 10 packages.
+      - dependency-name: 'dotnet-ef'
+        update-types: ['version-update:semver-major']
   - package-ecosystem: npm
     directory: /web
     schedule:
       interval: weekly
+    ignore:
+      # Type definitions must match the Node.js 22 LTS runtime used locally and in CI.
+      - dependency-name: '@types/node'
+        update-types: ['version-update:semver-major']
     groups:
       frontend:
         patterns: ['*']
