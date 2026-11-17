@@ -1,0 +1,88 @@
+name: Deploy to Azure App Service
+
+# Runs after CI succeeds on main. It does nothing until the repository variables below exist,
+# so no deployment can happen before the Azure resources have been reviewed and created.
+#   AZURE_CLIENT_ID, AZURE_TENANT_ID, AZURE_SUBSCRIPTION_ID  (GitHub OIDC app registration; IDs, not secrets)
+#   AZURE_WEBAPP_NAME
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    if: >-
+      vars.AZURE_WEBAPP_NAME != '' &&
+      (github.event_name == 'workflow_dispatch' ||
+       (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push'))
+    runs-on: ubuntu-24.04
+    environment:
+      name: production
+      url: https://${{ vars.AZURE_WEBAPP_NAME }}.azurewebsites.net
+    permissions:
+      contents: read
+      actions: read # download the artifact built by the CI run
+      id-token: write # GitHub OIDC token for Azure login (no stored credentials)
+    steps:
+      - name: Download the package built and tested by CI
+        if: github.event_name == 'workflow_run'
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: claimflow-app
+          path: publish
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ github.token }}
+
+      - name: Build package (manual run)
+        if: github.event_name == 'workflow_dispatch'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          path: src
+      - if: github.event_name == 'workflow_dispatch'
+        uses: actions/setup-dotnet@0f4a354dd5547a28c70b7853dbd95d5b67886e73 # v6.1.0
+        with:
+          global-json-file: src/global.json
+      - if: github.event_name == 'workflow_dispatch'
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: src/web/.nvmrc
+      - if: github.event_name == 'workflow_dispatch'
+        run: |
+          (cd src/web && npm ci && npm run build)
+          dotnet publish src/src/ClaimFlow.Api --configuration Release --output publish
+          mkdir -p publish/wwwroot && cp -r src/web/dist/. publish/wwwroot/
+
+      - name: Azure login (OIDC)
+        uses: azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906 # v3.1.0
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Deploy
+        uses: azure/webapps-deploy@02a81bead70021f5284939794bcec79c271ab383 # v3.0.8
+        with:
+          app-name: ${{ vars.AZURE_WEBAPP_NAME }}
+          package: publish
+
+      - name: Smoke test
+        run: |
+          url="https://${{ vars.AZURE_WEBAPP_NAME }}.azurewebsites.net"
+          # The free tier and a paused database can take a minute to wake up.
+          for attempt in $(seq 1 12); do
+            if curl --fail --silent --max-time 30 "$url/health" | grep -q Healthy; then
+              curl --fail --silent --max-time 30 "$url/api/dashboard/summary" > /dev/null && echo "Smoke test passed" && exit 0
+            fi
+            echo "Attempt $attempt: not ready yet"; sleep 15
+          done
+          echo "::error::Smoke test failed"; exit 1

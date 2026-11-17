@@ -1,0 +1,25 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "CLAIMFLOW API (SQLite)",
+      "type": "coreclr",
+      "request": "launch",
+      "preLaunchTask": "build-api",
+      "program": "${workspaceFolder}/src/ClaimFlow.Api/bin/Debug/net10.0/ClaimFlow.Api.dll",
+      "cwd": "${workspaceFolder}/src/ClaimFlow.Api",
+      "env": {
+        "ASPNETCORE_ENVIRONMENT": "Development",
+        "ASPNETCORE_URLS": "http://localhost:5080"
+      },
+      "stopAtEntry": false
+    },
+    {
+      "name": "CLAIMFLOW web (Chrome)",
+      "type": "chrome",
+      "request": "launch",
+      "url": "http://localhost:5173",
+      "webRoot": "${workspaceFolder}/web/src"
+    }
+  ]
+}

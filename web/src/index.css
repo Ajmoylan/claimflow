@@ -399,7 +399,8 @@ h3 {
   align-items: end;
 }
 
-.field-wide {
+.field-wide,
+.filters .filter-actions {
   grid-column: 1 / -1;
 }
 

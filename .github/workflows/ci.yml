@@ -1,0 +1,140 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  DOTNET_NOLOGO: true
+  DOTNET_CLI_TELEMETRY_OPTOUT: true
+
+jobs:
+  backend:
+    name: Backend (build, format, tests on SQLite)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-dotnet@0f4a354dd5547a28c70b7853dbd95d5b67886e73 # v6.1.0
+        with:
+          global-json-file: global.json
+      - name: Restore
+        run: dotnet restore
+      - name: Check formatting
+        run: dotnet format --verify-no-changes --no-restore
+      - name: Build (warnings are errors)
+        run: dotnet build --configuration Release --no-restore
+      - name: Check EF Core migrations match the model (both providers)
+        run: |
+          dotnet tool restore
+          for context in SqliteClaimFlowDbContext SqlServerClaimFlowDbContext; do
+            dotnet ef migrations has-pending-model-changes --project src/ClaimFlow.Api --context "$context" --configuration Release --no-build
+          done
+      - name: Test (unit + integration on SQLite)
+        run: dotnet test --configuration Release --no-build --coverage --coverage-output-format cobertura --report-xunit-trx
+      - name: Check for vulnerable NuGet packages
+        run: |
+          dotnet list package --vulnerable --include-transitive 2>&1 | tee vulnerable.txt
+          if grep -q -i "has the following vulnerable packages" vulnerable.txt; then
+            echo "::error::Vulnerable NuGet packages found"
+            exit 1
+          fi
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: backend-test-results
+          path: TestResults/**
+          if-no-files-found: ignore
+          retention-days: 14
+
+  backend-sqlserver:
+    name: Integration tests on SQL Server (container)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-dotnet@0f4a354dd5547a28c70b7853dbd95d5b67886e73 # v6.1.0
+        with:
+          global-json-file: global.json
+      - name: Integration tests against SQL Server 2022 (Testcontainers)
+        env:
+          CLAIMFLOW_TEST_PROVIDER: SqlServer
+        run: dotnet test --project tests/ClaimFlow.IntegrationTests --configuration Release --report-xunit-trx
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: sqlserver-test-results
+          path: TestResults/**
+          if-no-files-found: ignore
+          retention-days: 14
+
+  frontend:
+    name: Frontend (format, lint, types, tests, build)
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: web/.nvmrc
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - run: npm ci
+      - run: npm run format:check
+      - run: npm run lint -- --max-warnings 0
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build
+      - name: Audit runtime dependencies (blocking)
+        run: npm audit --omit=dev --audit-level=high
+      - name: Audit all dependencies (report only)
+        run: npm audit || echo "::warning::npm audit reported issues in development dependencies (see log)"
+
+  package:
+    name: Package deployable app
+    needs: [backend, backend-sqlserver, frontend]
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-dotnet@0f4a354dd5547a28c70b7853dbd95d5b67886e73 # v6.1.0
+        with:
+          global-json-file: global.json
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: web/.nvmrc
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: Build frontend
+        working-directory: web
+        run: |
+          npm ci
+          npm run build
+      - name: Publish API with the frontend in wwwroot
+        run: |
+          dotnet publish src/ClaimFlow.Api --configuration Release --output publish
+          mkdir -p publish/wwwroot
+          cp -r web/dist/. publish/wwwroot/
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: claimflow-app
+          path: publish
+          retention-days: 7
