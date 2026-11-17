@@ -12,7 +12,7 @@ CLAIMFLOW is a public, anonymous demo that holds only synthetic data.
   with a managed identity (Entra ID only), so no password or connection-string secret exists.
 - **Bounded writes.** Rate limits per client and in total, a 16 KB request body limit, and a hard cap on
   visitor-created claims. There is no public reset endpoint: the demo data is restored automatically every
-  night at 03:00 Oslo time.
+  night at 03:00 Oslo time, checked before every API request so it also works after the app has slept.
 - **Validated input.** Every request is validated (data annotations plus business rules) before it reaches
   the database. Queries are parameterised by EF Core, and search wildcards are escaped.
 - **Safe errors.** Failures return RFC 9457 ProblemDetails without stack traces, SQL or type names.

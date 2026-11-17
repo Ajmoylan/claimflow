@@ -46,7 +46,7 @@ public sealed class DashboardService(ClaimFlowDbContext db, TimeProvider clock, 
 
         var options = demoOptions.Value;
         var nowUtc = clock.GetUtcNow().UtcDateTime;
-        var nextReset = DemoDataService.MostRecentScheduledResetUtc(nowUtc, options).AddDays(1);
+        var nextReset = DemoDataService.NextScheduledResetUtc(nowUtc, options);
 
         return new DashboardSummaryDto(
             TotalClaims: countByStatus.Values.Sum(),

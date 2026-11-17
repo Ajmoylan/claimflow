@@ -149,3 +149,30 @@ public class DemoDataTests
         Assert.All(Enum.GetValues<ClaimStatus>(), status => Assert.Contains(claims, c => c.Status == status));
     }
 }
+
+public class NextResetScheduleTests
+{
+    private static readonly DemoOptions Options = new() { ResetTimeOfDay = new TimeOnly(3, 0), ResetTimeZone = "Europe/Oslo" };
+
+    [Fact]
+    public void BeforeThreeOsloTime_NextResetIsToday()
+    {
+        var now = new DateTime(2026, 11, 15, 1, 30, 0, DateTimeKind.Utc); // 02:30 in Oslo
+        Assert.Equal(new DateTime(2026, 11, 15, 2, 0, 0, DateTimeKind.Utc), DemoDataService.NextScheduledResetUtc(now, Options));
+    }
+
+    [Fact]
+    public void AfterThreeOsloTime_NextResetIsTomorrow()
+    {
+        var now = new DateTime(2026, 11, 15, 12, 0, 0, DateTimeKind.Utc);
+        Assert.Equal(new DateTime(2026, 11, 16, 2, 0, 0, DateTimeKind.Utc), DemoDataService.NextScheduledResetUtc(now, Options));
+    }
+
+    [Fact]
+    public void AcrossTheAutumnClockChange_NextResetIsStill0300Local()
+    {
+        // Norway leaves summer time on 25 Oct 2026; 03:00 on 25 Oct is already winter time (UTC+1).
+        var now = new DateTime(2026, 10, 24, 12, 0, 0, DateTimeKind.Utc);
+        Assert.Equal(new DateTime(2026, 10, 25, 2, 0, 0, DateTimeKind.Utc), DemoDataService.NextScheduledResetUtc(now, Options));
+    }
+}

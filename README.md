@@ -63,7 +63,7 @@ flowchart LR
         C --> S["Services<br/>ClaimService · DashboardService ·<br/>PolicyService · DemoDataService"]
         S --> D["Domain<br/>Claim · Policy · ClaimWorkflow"]
         S --> EF["EF Core<br/>ClaimFlowDbContext"]
-        BG["DemoResetBackgroundService<br/>(nightly reset)"] --> S
+        GATE["DemoResetGate<br/>(nightly reset before the<br/>first request after 03:00)"] --> S
     end
 
     EF -->|"local dev / fast tests"| SQLite[(SQLite)]
@@ -272,7 +272,7 @@ Provider differences that were handled deliberately:
 ## Testing
 
 ```bash
-dotnet test                       # 101 tests: 50 unit + 51 integration (SQLite)
+dotnet test                       # 106 tests: 53 unit + 53 integration (SQLite)
 cd web && npm test                # 13 frontend tests (Vitest + Testing Library)
 ```
 
@@ -284,8 +284,8 @@ CLAIMFLOW_TEST_PROVIDER=SqlServer dotnet test --project tests/ClaimFlow.Integrat
 
 | Suite                                  | What it covers                                                                                                                                                                                                                                                         |
 | -------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `ClaimFlow.UnitTests`                  | Every possible status transition (4×4), audit entries and versioning, the reason rule, request validation, reference generation, the nightly-reset schedule including daylight saving, and seed-data consistency.                                                      |
-| `ClaimFlow.IntegrationTests`           | The real app in memory (`WebApplicationFactory`) with real migrations: create (201, `Location`, persisted, audit started), retrieval, filtering, search (including literal `%`/`_`), paging, sorting, 400/404/409/413/415/429 ProblemDetails, the full workflow, database constraints, cascades, concurrency conflicts, demo reset and limits, rate limiting, security headers and OpenAPI. |
+| `ClaimFlow.UnitTests`                  | Every possible status transition (4×4), audit entries and versioning, the reason rule, request validation, reference generation, the nightly-reset schedule including daylight-saving changes, and seed-data consistency.                                                      |
+| `ClaimFlow.IntegrationTests`           | The real app in memory (`WebApplicationFactory`) with real migrations: create (201, `Location`, persisted, audit started), retrieval, filtering, search (including literal `%`/`_`), paging, sorting, 400/404/409/413/415/429 ProblemDetails, the full workflow, database constraints, cascades, concurrency conflicts, demo reset and limits, the nightly reset with no background service (simulating a sleeping app), rate limiting, security headers and OpenAPI. |
 | `web/src/**/*.test.ts(x)`              | The API client and ProblemDetails parsing, form validation rules, server errors shown on fields, and that the workflow panel offers only allowed actions.                                                                                                             |
 
 Each integration-test class gets its own fresh database (an in-memory SQLite database, or a new database
@@ -333,9 +333,15 @@ After the first deployment, the app's identity is granted database access once w
 
 The public demo is anonymous, so it is built to be hard to abuse and impossible to damage permanently:
 
-- **No public reset endpoint.** The data is restored automatically every night at 03:00 Oslo time. A
-  background service checks every 15 minutes and at startup, which covers the free tier putting the app to
-  sleep.
+- **No public reset endpoint.** The data is restored automatically every night at 03:00 Oslo time, and the
+  reset does not depend on a long-running background process. The free App Service tier unloads idle apps,
+  so the process may simply not be running at 03:00. To cover that, `DemoResetGate` runs before every `/api`
+  request and at startup. It keeps the next scheduled reset time in memory, so a normal request costs one
+  time comparison. Once that time has passed, the first request runs the reset check while concurrent
+  requests wait, so nobody sees or adds to the previous day's data. If the check fails (for example while
+  Azure SQL is resuming), the request is still served and the check is retried a minute later. A background
+  timer also checks every 15 minutes while the app is awake. That covers quiet nights, but correctness does
+  not depend on it, and an integration test proves the reset happens with the background service removed.
 - **Bounded writes:** a cap on visitor-created claims (200 by default) returns `429` with an explanation until
   the next reset. On top of that, 10 writes per minute per client and 60 per minute in total, 120 requests
   per minute per client, and a 16 KB request body limit.

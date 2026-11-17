@@ -69,10 +69,26 @@ public sealed partial class DemoDataService(
     /// <summary>The last time a scheduled reset should have happened, e.g. 03:00 Oslo time today or yesterday.</summary>
     internal static DateTime MostRecentScheduledResetUtc(DateTime nowUtc, DemoOptions options)
     {
+        var (zone, localNow, todaysReset) = LocalSchedule(nowUtc, options);
+        return ToUtc(localNow >= todaysReset ? todaysReset : todaysReset.AddDays(-1), zone);
+    }
+
+    /// <summary>The next time a scheduled reset will happen, e.g. 03:00 Oslo time today or tomorrow.</summary>
+    internal static DateTime NextScheduledResetUtc(DateTime nowUtc, DemoOptions options)
+    {
+        var (zone, localNow, todaysReset) = LocalSchedule(nowUtc, options);
+        return ToUtc(localNow < todaysReset ? todaysReset : todaysReset.AddDays(1), zone);
+    }
+
+    private static (TimeZoneInfo Zone, DateTime LocalNow, DateTime TodaysReset) LocalSchedule(DateTime nowUtc, DemoOptions options)
+    {
         var zone = TimeZoneInfo.FindSystemTimeZoneById(options.ResetTimeZone);
         var localNow = TimeZoneInfo.ConvertTimeFromUtc(nowUtc, zone);
-        var todaysReset = localNow.Date + options.ResetTimeOfDay.ToTimeSpan();
-        var localReset = localNow >= todaysReset ? todaysReset : todaysReset.AddDays(-1);
+        return (zone, localNow, localNow.Date + options.ResetTimeOfDay.ToTimeSpan());
+    }
+
+    private static DateTime ToUtc(DateTime localReset, TimeZoneInfo zone)
+    {
         if (zone.IsInvalidTime(localReset))
         {
             // The configured time falls in a skipped daylight-saving hour; use the first valid time after it.

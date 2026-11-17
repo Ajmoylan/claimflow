@@ -3,14 +3,12 @@ using Microsoft.Extensions.Options;
 namespace ClaimFlow.Api.Services;
 
 /// <summary>
-/// Checks periodically whether the nightly reset is due. On the free App Service plan the app sleeps when idle,
-/// so the check also runs at startup: the first visitor after 03:00 always sees fresh demo data.
+/// Belt and braces for the nightly reset: while the app happens to be running, check periodically so the
+/// reset also happens when nobody is visiting. Correctness does not depend on this service. The
+/// <see cref="DemoResetGate"/> checks before every API request, which covers the free tier unloading the app.
 /// </summary>
-public sealed partial class DemoResetBackgroundService(
-    IServiceScopeFactory scopeFactory,
-    IOptions<DemoOptions> options,
-    TimeProvider clock,
-    ILogger<DemoResetBackgroundService> logger) : BackgroundService
+public sealed class DemoResetBackgroundService(DemoResetGate gate, IOptions<DemoOptions> options, TimeProvider clock)
+    : BackgroundService
 {
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
@@ -20,23 +18,9 @@ public sealed partial class DemoResetBackgroundService(
         }
 
         using var timer = new PeriodicTimer(options.Value.CheckInterval, clock);
-        do
+        while (await timer.WaitForNextTickAsync(stoppingToken))
         {
-            try
-            {
-                await using var scope = scopeFactory.CreateAsyncScope();
-                var demo = scope.ServiceProvider.GetRequiredService<DemoDataService>();
-                await demo.ResetIfDueAsync(stoppingToken);
-            }
-            catch (Exception ex) when (ex is not OperationCanceledException)
-            {
-                // Never crash the host because of a demo reset; try again on the next tick.
-                LogResetCheckFailed(logger, ex);
-            }
+            await gate.EnsureFreshAsync(stoppingToken); // never throws except on shutdown
         }
-        while (await timer.WaitForNextTickAsync(stoppingToken));
     }
-
-    [LoggerMessage(EventId = 3001, Level = LogLevel.Error, Message = "Demo reset check failed")]
-    private static partial void LogResetCheckFailed(ILogger logger, Exception exception);
 }

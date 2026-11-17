@@ -59,6 +59,7 @@ builder.Services.AddScoped<ClaimService>();
 builder.Services.AddScoped<PolicyService>();
 builder.Services.AddScoped<DashboardService>();
 builder.Services.AddScoped<DemoDataService>();
+builder.Services.AddSingleton<DemoResetGate>();
 builder.Services.AddHostedService<DemoResetBackgroundService>();
 
 builder.Services.AddHealthChecks().AddDbContextCheck<ClaimFlowDbContext>("database");
@@ -77,6 +78,7 @@ app.UseClaimFlowSecurityHeaders();
 app.UseDefaultFiles();
 app.UseStaticFiles();
 app.UseRateLimiter();
+app.UseDemoResetGate(); // nightly reset happens before the first API request after 03:00, even after the app slept
 
 app.MapOpenApi();
 // Keep the docs page self-contained: no external fonts, telemetry, AI agent, MCP or "deploy" promos.
@@ -97,6 +99,7 @@ app.MapFallback("/api/{**path}", () => Results.Problem(statusCode: StatusCodes.S
 app.MapFallbackToFile("index.html");
 
 await DatabaseInitializer.InitializeAsync(app.Services);
+await app.Services.GetRequiredService<DemoResetGate>().EnsureFreshAsync(CancellationToken.None);
 await app.RunAsync();
 
 /// <summary>Entry point; public so integration tests can host the app with WebApplicationFactory.</summary>

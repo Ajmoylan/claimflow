@@ -33,6 +33,11 @@ public class ClaimFlowApiFactory : WebApplicationFactory<Program>, IAsyncLifetim
     /// <summary>Extra configuration a derived factory wants (e.g. lower limits).</summary>
     protected virtual IDictionary<string, string?> ExtraSettings => new Dictionary<string, string?>();
 
+    /// <summary>Extra service changes a derived factory wants (e.g. removing a hosted service).</summary>
+    protected virtual void ConfigureTestServices(IServiceCollection services)
+    {
+    }
+
     public async ValueTask InitializeAsync()
     {
         if (Provider == DatabaseProvider.SqlServer)
@@ -71,6 +76,7 @@ public class ClaimFlowApiFactory : WebApplicationFactory<Program>, IAsyncLifetim
         {
             services.RemoveAll<TimeProvider>();
             services.AddSingleton<TimeProvider>(Clock);
+            ConfigureTestServices(services);
         });
     }
 
