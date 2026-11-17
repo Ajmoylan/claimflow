@@ -27,6 +27,12 @@ param sqlAdminLogin string
 @allowed(['F1', 'B1'])
 param appServiceSku string = 'F1'
 
+@description('Tags applied to every resource, for cost tracking.')
+param tags object = {
+  project: 'claimflow'
+  environment: 'demo'
+}
+
 var suffix = uniqueString(resourceGroup().id)
 var appName = '${namePrefix}-${suffix}'
 var sqlServerName = '${namePrefix}-sql-${suffix}'
@@ -35,6 +41,7 @@ var databaseName = 'claimflow'
 resource plan 'Microsoft.Web/serverfarms@2024-04-01' = {
   name: '${namePrefix}-plan'
   location: location
+  tags: tags
   kind: 'linux'
   sku: {
     name: appServiceSku
@@ -47,6 +54,7 @@ resource plan 'Microsoft.Web/serverfarms@2024-04-01' = {
 resource sqlServer 'Microsoft.Sql/servers@2023-08-01' = {
   name: sqlServerName
   location: location
+  tags: tags
   properties: {
     minimalTlsVersion: '1.2'
     publicNetworkAccess: 'Enabled'
@@ -76,6 +84,7 @@ resource database 'Microsoft.Sql/servers/databases@2023-08-01' = {
   parent: sqlServer
   name: databaseName
   location: location
+  tags: tags
   sku: {
     name: 'GP_S_Gen5'
     tier: 'GeneralPurpose'
@@ -87,7 +96,7 @@ resource database 'Microsoft.Sql/servers/databases@2023-08-01' = {
     // When the monthly allowance is used up the database pauses instead of billing.
     useFreeLimit: true
     freeLimitExhaustionBehavior: 'AutoPause'
-    autoPauseDelay: 60
+    // No autoPauseDelay: on the free tier the database always pauses after 15 idle minutes (not configurable).
     minCapacity: json('0.5')
     maxSizeBytes: 34359738368 // 32 GB
     requestedBackupStorageRedundancy: 'Local'
@@ -98,6 +107,7 @@ resource database 'Microsoft.Sql/servers/databases@2023-08-01' = {
 resource app 'Microsoft.Web/sites@2024-04-01' = {
   name: appName
   location: location
+  tags: tags
   kind: 'app,linux'
   identity: {
     type: 'SystemAssigned'
