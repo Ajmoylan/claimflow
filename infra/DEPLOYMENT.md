@@ -7,18 +7,18 @@ Every step that creates a resource waits for explicit approval.
 
 | # | Resource | Name | SKU / configuration | Region | List price | Expected cost |
 |---|---|---|---|---|---|---|
-| 1 | Resource group | `rg-claimflow` | Tags `project=claimflow`, `environment=demo` | France Central | free | **0 NOK** |
-| 2 | App Service plan | `claimflow-plan` | **F1 (Free)**, Linux | France Central | 0.00 NOK/hour | **0 NOK** |
-| 3 | Web App | `claimflow-<unique>` | .NET 10 (`DOTNETCORE\|10.0`), HTTPS only, TLS 1.2+, FTP/SCM basic auth off, system-assigned managed identity | France Central | included in plan | **0 NOK** |
-| 4 | Azure SQL logical server | `claimflow-sql-<unique>` | Entra ID-only authentication, TLS 1.2+, "Allow Azure services" firewall rule | France Central | free | **0 NOK** |
-| 5 | Azure SQL database | `claimflow` | General Purpose serverless Gen5, 0.5–2 vCores, 32 GB max, LRS backups, **free offer with `AutoPause` on exhaustion** | France Central | after the allowance: 6.05 NOK per vCore-hour, 1.33 NOK/GB-month storage, 1.16 NOK/GB-month backup | **0 NOK** (see below) |
+| 1 | Resource group | `rg-claimflow` | Tags `project=claimflow`, `environment=demo` | Belgium Central | free | **0 NOK** |
+| 2 | App Service plan | `claimflow-plan` | **F1 (Free)**, Linux | Belgium Central | 0.00 NOK/hour | **0 NOK** |
+| 3 | Web App | `claimflow-<unique>` | .NET 10 (`DOTNETCORE\|10.0`), HTTPS only, TLS 1.2+, FTP/SCM basic auth off, system-assigned managed identity | Belgium Central | included in plan | **0 NOK** |
+| 4 | Azure SQL logical server | `claimflow-sql-<unique>` | Entra ID-only authentication, TLS 1.2+, "Allow Azure services" firewall rule | Belgium Central | free | **0 NOK** |
+| 5 | Azure SQL database | `claimflow` | General Purpose serverless Gen5, 0.5–2 vCores, 32 GB max, LRS backups, **free offer with `AutoPause` on exhaustion** | Belgium Central | after the allowance: 5.32 NOK per vCore-hour, 1.27 NOK/GB-month storage, 1.10 NOK/GB-month backup | **0 NOK** (see below) |
 | 6 | Entra app registration and service principal | `claimflow-github-deploy` | Federated credential for `repo:Ajmoylan/claimflow:environment:production`, role **Website Contributor** on the Web App only | (tenant) | free | **0 NOK** |
 | 7 | GitHub environment | `production` | Deploys from `main` only; **you approve each deployment** (required reviewer) | (GitHub) | free | **0 NOK** |
 
 `<unique>` is a deterministic hash of the resource group ID (Bicep `uniqueString`). It is known after step 2 of the procedure.
 
-Prices are Microsoft retail list prices for France Central in NOK, from the Azure Retail Prices API on
-17 Nov 2026. Outbound data transfer: the first 100 GB per month is free (0.81 NOK/GB after that).
+Prices are Microsoft retail list prices for Belgium Central in NOK, from the Azure Retail Prices API on
+18 Nov 2026. Outbound data transfer: the first 100 GB per month is free (0.81 NOK/GB after that).
 
 ### How the free tier behaves, and the one real limitation
 
@@ -34,7 +34,7 @@ Prices are Microsoft retail list prices for France Central in NOK, from the Azur
   - With `freeLimitExhaustionBehavior: AutoPause` (the proposed setting), **nothing is billed**. If the
     allowance runs out, the database stays paused until the 1st of the next month, and the demo shows a
     "could not complete the request" error until then.
-  - The alternative, `BillOverUsage`, keeps the demo online and bills about **3 NOK per active hour** at
+  - The alternative, `BillOverUsage`, keeps the demo online and bills about **2.70 NOK per active hour** at
     0.5 vCore. Microsoft does not allow switching back to `AutoPause` after choosing this.
 - **Spending is capped regardless:** this subscription is Azure for Students with `spendingLimit: On` and no
   card attached. Charges can only come out of the remaining student credit, and the subscription is
@@ -50,14 +50,15 @@ Prices are Microsoft retail list prices for France Central in NOK, from the Azur
    in its own directory). The documentation lists guest/external users as supported Azure SQL admins but
    does not name personal Microsoft accounts. If sign-in fails in step 4, the documented fallback is to make
    an Entra **security group** `claimflow-sql-admins` (containing you) the admin instead. That is free.
-3. **F1 capacity in France Central** for this subscription. It is offered there; quota is only checked at creation.
+3. **Region.** France Central was planned first, but `what-if` showed this subscription has an F1 (and B1)
+   quota of 0 there. Belgium Central passes `what-if` for the whole template and offers the SQL free tier.
 
 ### Paid fallbacks (only with separate approval)
 
 | Option | Cost per month (list) | When it would be useful |
 |---|---|---|
-| Azure SQL **Basic** (5 DTU, 2 GB) instead of the free offer | about 57 NOK (1.86 NOK/day) | Free offer refused, or the demo needs to stay online without monthly limits; no pausing, so no database cold start |
-| Free offer with `BillOverUsage` | about 3 NOK per active hour beyond about 55 hours | Keep the demo online when the allowance runs out |
+| Azure SQL **Basic** (5 DTU, 2 GB) instead of the free offer | about 45 NOK (1.49 NOK/day) | Free offer refused, or the demo needs to stay online without monthly limits; no pausing, so no database cold start |
+| Free offer with `BillOverUsage` | about 2.70 NOK per active hour beyond about 55 hours | Keep the demo online when the allowance runs out |
 | App Service **B1** instead of F1 | about 122 NOK (0.167 NOK/hour) | Always On (no app cold start), no daily CPU quota |
 
 ## Procedure (each step after approval)
@@ -67,7 +68,7 @@ All commands run from the repository root, signed in with `az login` to the Azur
 ### 1. Preview: no changes
 
 ```bash
-az group create --name rg-claimflow --location francecentral --tags project=claimflow environment=demo
+az group create --name rg-claimflow --location belgiumcentral --tags project=claimflow environment=demo
 export CLAIMFLOW_SQL_ADMIN_OBJECT_ID=$(az ad signed-in-user show --query id -o tsv)
 export CLAIMFLOW_SQL_ADMIN_LOGIN=$(az ad signed-in-user show --query userPrincipalName -o tsv)
 az deployment group what-if --resource-group rg-claimflow --template-file infra/main.bicep --parameters infra/main.bicepparam

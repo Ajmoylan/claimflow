@@ -312,9 +312,9 @@ flowchart LR
     App -->|"Managed identity<br/>(Entra ID only)"| DB[("Azure SQL Database<br/>serverless · free offer")]
 ```
 
-Defined in [`infra/main.bicep`](infra/main.bicep). Planned region: **France Central**. The subscription
-policy allows only a few EU regions, and Azure SQL provisioning is restricted in Norway East and
-Switzerland North for this subscription.
+Defined in [`infra/main.bicep`](infra/main.bicep). Region: **Belgium Central**. The subscription
+policy allows only a few EU regions; of those, Norway East and Switzerland North restrict Azure SQL
+provisioning, and France Central has no free App Service (F1) quota for this subscription.
 
 - **No secrets anywhere:** the app authenticates to Azure SQL with its system-assigned managed identity,
   the SQL server only accepts Entra ID logins, and GitHub deploys through OIDC federation. Basic-auth
