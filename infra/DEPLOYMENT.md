@@ -10,26 +10,45 @@ Every step that creates a resource waits for explicit approval.
 | 1 | Resource group | `rg-claimflow` | Tags `project=claimflow`, `environment=demo` | Belgium Central | free | **0 NOK** |
 | 2 | App Service plan | `claimflow-plan` | **F1 (Free)**, Linux | Belgium Central | 0.00 NOK/hour | **0 NOK** |
 | 3 | Web App | `claimflow-<unique>` | .NET 10 (`DOTNETCORE\|10.0`), HTTPS only, TLS 1.2+, FTP/SCM basic auth off, system-assigned managed identity | Belgium Central | included in plan | **0 NOK** |
-| 4 | Azure SQL logical server | `claimflow-sql-<unique>` | Entra ID-only authentication, TLS 1.2+, "Allow Azure services" firewall rule | Belgium Central | free | **0 NOK** |
-| 5 | Azure SQL database | `claimflow` | General Purpose serverless Gen5, 0.5–2 vCores, 32 GB max, LRS backups, **free offer with `AutoPause` on exhaustion** | Belgium Central | after the allowance: 5.32 NOK per vCore-hour, 1.27 NOK/GB-month storage, 1.10 NOK/GB-month backup | **0 NOK** (see below) |
+| 4 | Azure SQL logical server | `claimflow-sql-<unique>` | Entra ID-only authentication, TLS 1.2+, firewall admits only the Web App's outbound IPv4 addresses (no "Allow Azure services") | France Central | free | **0 NOK** |
+| 5 | Azure SQL database | `claimflow` | General Purpose serverless Gen5, 0.5–2 vCores, 32 GB max, LRS backups, **free offer with `AutoPause` on exhaustion** | France Central | after the allowance: 5.32 NOK per vCore-hour, 1.27 NOK/GB-month storage, 1.10 NOK/GB-month backup | **0 NOK** (see below) |
 | 6 | Entra app registration and service principal | `claimflow-github-deploy` | Federated credential for `repo:Ajmoylan/claimflow:environment:production`, role **Website Contributor** on the Web App only | (tenant) | free | **0 NOK** |
 | 7 | GitHub environment | `production` | Deploys from `main` only; **you approve each deployment** (required reviewer) | (GitHub) | free | **0 NOK** |
 
 `<unique>` is a deterministic hash of the resource group ID (Bicep `uniqueString`). It is known after step 2 of the procedure.
 
-Prices are Microsoft retail list prices for Belgium Central in NOK, from the Azure Retail Prices API on
-18 Nov 2026. Outbound data transfer: the first 100 GB per month is free (0.81 NOK/GB after that).
+Prices are Microsoft retail list prices in NOK, from the Azure Retail Prices API on 18 Nov 2026.
+Outbound data transfer to the internet: the first 100 GB per month is free (0.81 NOK/GB after that).
+
+### Why the app and the database are in different regions
+
+This subscription may only deploy to Belgium Central, Austria East, France Central, Norway East and
+Switzerland North. No single one of them has both pieces of the free setup:
+
+| Region | App Service F1 quota | Azure SQL free offer |
+|---|---|---|
+| France Central | 0 (what-if: `SubscriptionIsOverQuotaForSku`) | offered |
+| Belgium Central | available | not offered (`ProvisioningDisabled` when tried) |
+| Austria East | available | not offered |
+| Norway East, Switzerland North | available / 0 | SQL provisioning restricted for this subscription |
+
+So the app runs in **Belgium Central** and the database in **France Central** (`sqlLocation`). The only cost
+this adds is inter-region data transfer between the app and the database: **0.19 NOK/GB**. A demo request
+moves a few kilobytes, so even a busy month is far below 1 GB, i.e. **well under 1 NOK per month**, paid
+from the student credit. Each database round trip also gets a few milliseconds longer.
 
 ### How the free tier behaves, and the one real limitation
 
 - **App Service F1:** free, with a quota of 60 CPU minutes per day and 1 GB memory. There is no Always On, so
   the app unloads when idle and the first request after that is slow (a cold start).
 - **Azure SQL free offer:** per database, every month: 100 000 vCore-seconds, 32 GB of data and 32 GB of backup
-  storage. The database pauses automatically after **15 minutes** without connections (fixed on the free tier).
+  storage. The database pauses automatically after **60 minutes** without connections. Azure fixes this on a free
+  database with `AutoPause` (`az sql db update --auto-pause-delay 15` is refused with "Only default value for
+  auto pause delay is allowed").
   - Billing per active second is at least the 0.5 vCore minimum, so the allowance is about **55 active
-    hours per month**. Every visit keeps the database awake for its own length plus 15 minutes, so that is
-    roughly **150–200 visits a month** before the allowance is used up.
-  - The app releases its pooled SQL connections after 2 idle minutes, so the database can start its 15-minute
+    hours per month**. Every visit keeps the database awake for its own length plus 60 minutes, so that is
+    roughly **50 well-spread visits a month** (visits within the same hour share it) before the allowance is used up.
+  - The app releases its pooled SQL connections after 2 idle minutes, so the database can start its 60-minute
     pause countdown without waiting for ADO.NET's 4–8 minute pool cleanup.
   - With `freeLimitExhaustionBehavior: AutoPause` (the proposed setting), **nothing is billed**. If the
     allowance runs out, the database stays paused until the 1st of the next month, and the demo shows a
@@ -50,8 +69,7 @@ Prices are Microsoft retail list prices for Belgium Central in NOK, from the Azu
    in its own directory). The documentation lists guest/external users as supported Azure SQL admins but
    does not name personal Microsoft accounts. If sign-in fails in step 4, the documented fallback is to make
    an Entra **security group** `claimflow-sql-admins` (containing you) the admin instead. That is free.
-3. **Region.** France Central was planned first, but `what-if` showed this subscription has an F1 (and B1)
-   quota of 0 there. Belgium Central passes `what-if` for the whole template and offers the SQL free tier.
+3. **Region.** See "Why the app and the database are in different regions" above.
 
 ### Paid fallbacks (only with separate approval)
 
@@ -107,6 +125,14 @@ az sql server firewall-rule delete -g rg-claimflow -s <sqlServerName> -n setup-t
 
 This grants `db_datareader`, `db_datawriter` and `db_ddladmin` (the app applies its EF Core migrations at
 startup). The temporary firewall rule for your IP address is removed right afterwards.
+
+**Network access.** The F1 tier cannot join a virtual network or use a private endpoint, so the app reaches
+the database's public endpoint. Instead of the broad "Allow Azure services" rule (which admits any Azure
+customer's traffic), the template adds one firewall rule per address in the Web App's
+`possibleOutboundIpAddresses` (`modules/sqlFirewall.bicep`). On the shared F1 tier these addresses belong to
+the App Service scale unit, so other apps on it share them; a connection still needs an Entra ID identity
+that has a database user, and only the app's managed identity (and the admin) has one. If App Service ever
+moves the app to new addresses, re-running the template updates the rules.
 
 ### 5. Let GitHub Actions deploy with OIDC (no secrets)
 

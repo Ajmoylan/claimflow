@@ -4,13 +4,19 @@
 // with one database on the Azure SQL free offer. The app reaches the database with its system-assigned
 // managed identity, so no password or secret exists anywhere.
 //
+// The app and the database can live in different regions: within this subscription's allowed regions,
+// only France Central offers the SQL free tier, and it has no F1 App Service quota.
+//
 // Deploy (only after the cost has been reviewed and approved):
 //   az deployment group create -g rg-claimflow -f infra/main.bicep -p infra/main.bicepparam
 
 targetScope = 'resourceGroup'
 
-@description('Azure region. The subscription policy only allows a few regions; F1 quota and Azure SQL (including the free offer) are available in belgiumcentral.')
+@description('Region for the App Service plan and Web App (needs F1 quota).')
 param location string = resourceGroup().location
+
+@description('Region for the Azure SQL server and database (needs the Azure SQL free offer).')
+param sqlLocation string = location
 
 @description('Short lowercase prefix used in resource names.')
 @minLength(3)
@@ -53,7 +59,7 @@ resource plan 'Microsoft.Web/serverfarms@2024-04-01' = {
 
 resource sqlServer 'Microsoft.Sql/servers@2023-08-01' = {
   name: sqlServerName
-  location: location
+  location: sqlLocation
   tags: tags
   properties: {
     minimalTlsVersion: '1.2'
@@ -69,21 +75,10 @@ resource sqlServer 'Microsoft.Sql/servers@2023-08-01' = {
   }
 }
 
-// The F1 plan cannot join a virtual network, so the server accepts connections from Azure services.
-// Access still requires an Entra ID identity that has been granted a database user.
-resource allowAzureServices 'Microsoft.Sql/servers/firewallRules@2023-08-01' = {
-  parent: sqlServer
-  name: 'AllowAzureServices'
-  properties: {
-    startIpAddress: '0.0.0.0'
-    endIpAddress: '0.0.0.0'
-  }
-}
-
 resource database 'Microsoft.Sql/servers/databases@2023-08-01' = {
   parent: sqlServer
   name: databaseName
-  location: location
+  location: sqlLocation
   tags: tags
   sku: {
     name: 'GP_S_Gen5'
@@ -96,7 +91,7 @@ resource database 'Microsoft.Sql/servers/databases@2023-08-01' = {
     // When the monthly allowance is used up the database pauses instead of billing.
     useFreeLimit: true
     freeLimitExhaustionBehavior: 'AutoPause'
-    // No autoPauseDelay: on the free tier the database always pauses after 15 idle minutes (not configurable).
+    // No autoPauseDelay: Azure fixes it at 60 idle minutes for a free database with AutoPause (not configurable).
     minCapacity: json('0.5')
     maxSizeBytes: 34359738368 // 32 GB
     requestedBackupStorageRedundancy: 'Local'
@@ -142,6 +137,17 @@ resource app 'Microsoft.Web/sites@2024-04-01' = {
   }
 }
 
+// The F1 plan cannot join a virtual network or use private endpoints, so the database is reached over its
+// public endpoint (TLS 1.2+, Entra ID only). The firewall admits only the Web App's own outbound addresses,
+// not "all Azure services". If App Service ever moves the app to other addresses, re-run this template.
+module sqlFirewall 'modules/sqlFirewall.bicep' = {
+  name: 'sql-firewall'
+  params: {
+    sqlServerName: sqlServer.name
+    outboundIpAddresses: app.properties.possibleOutboundIpAddresses
+  }
+}
+
 // Deployments use Entra ID (GitHub OIDC), so basic-auth publishing credentials are switched off.
 resource scmBasicAuth 'Microsoft.Web/sites/basicPublishingCredentialsPolicies@2024-04-01' = {
   parent: app
@@ -165,3 +171,4 @@ output appPrincipalId string = app.identity.principalId
 output sqlServerName string = sqlServer.name
 output sqlServerFqdn string = sqlServer.properties.fullyQualifiedDomainName
 output databaseName string = databaseName
+output sqlFirewallRuleCount int = sqlFirewall.outputs.ruleCount
