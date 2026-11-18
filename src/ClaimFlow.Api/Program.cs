@@ -18,8 +18,12 @@ if (!builder.Environment.IsDevelopment())
     });
 }
 
-// ---- Request limits: the API only ever receives small JSON bodies.
-builder.WebHost.ConfigureKestrel(kestrel => kestrel.Limits.MaxRequestBodySize = 16 * 1024);
+// ---- Kestrel: the API only ever receives small JSON bodies, and responses don't advertise the server software.
+builder.WebHost.ConfigureKestrel(kestrel =>
+{
+    kestrel.Limits.MaxRequestBodySize = 16 * 1024;
+    kestrel.AddServerHeader = false;
+});
 
 // ---- MVC, JSON and error responses
 builder.Services

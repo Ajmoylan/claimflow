@@ -123,7 +123,9 @@ resource app 'Microsoft.Web/sites@2024-04-01' = {
         // Lets the app see the real client IP behind App Service's front end (used for rate limiting).
         { name: 'ASPNETCORE_FORWARDEDHEADERS_ENABLED', value: 'true' }
         { name: 'Database__Provider', value: 'SqlServer' }
-        { name: 'Database__MigrateOnStartup', value: 'true' }
+        // The app's identity can only read and write data; the SQL admin applies migrations (infra/DEPLOYMENT.md).
+        // At startup the app only checks that no migration is pending.
+        { name: 'Database__MigrateOnStartup', value: 'false' }
       ]
       connectionStrings: [
         {

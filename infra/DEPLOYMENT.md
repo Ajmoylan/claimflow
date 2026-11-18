@@ -1,7 +1,8 @@
 # CLAIMFLOW: Azure deployment runbook
 
-Status: **proposed, not executed.** Nothing in this file has been run and no Azure resources exist.
-Every step that creates a resource waits for explicit approval.
+Status: **deployed on 18 Nov 2026** (app in Belgium Central, database in France Central). Live at
+https://claimflow-dqst3jxt3iyqy.azurewebsites.net. See [Deployment record](#deployment-record) for what was
+verified. Any change that creates or upgrades a resource still waits for explicit approval.
 
 ## What gets created
 
@@ -112,19 +113,50 @@ az appservice plan show -g rg-claimflow -n claimflow-plan --query sku.name
 
 Expected: `useFreeLimit: true`, `onExhaustion: AutoPause`, plan `F1`.
 
-### 4. Give the app's managed identity access to the database (one time)
+### 4. Create the schema and give the app's managed identity data access (one time)
 
 ```bash
 brew install sqlcmd   # Microsoft's go-sqlcmd
 MY_IP=$(curl -s https://api.ipify.org)
 az sql server firewall-rule create -g rg-claimflow -s <sqlServerName> -n setup-temporary --start-ip-address $MY_IP --end-ip-address $MY_IP
+# Schema: applied by you, the SQL admin (see "Apply database migrations" below)
+dotnet tool run dotnet-ef migrations script --idempotent --project src/ClaimFlow.Api \
+  --context SqlServerClaimFlowDbContext --output /tmp/migrate.sql
+sqlcmd -S <sqlServerFqdn> -d claimflow --authentication-method ActiveDirectoryAzCli -b -i /tmp/migrate.sql
+# Data access for the app
 sed "s/<app-name>/<appName>/g" infra/grant-app-db-access.sql > /tmp/grant.sql
-sqlcmd -S <sqlServerFqdn> -d claimflow --authentication-method ActiveDirectoryAzCli -i /tmp/grant.sql
+sqlcmd -S <sqlServerFqdn> -d claimflow --authentication-method ActiveDirectoryAzCli -b -i /tmp/grant.sql
 az sql server firewall-rule delete -g rg-claimflow -s <sqlServerName> -n setup-temporary
 ```
 
-This grants `db_datareader`, `db_datawriter` and `db_ddladmin` (the app applies its EF Core migrations at
-startup). The temporary firewall rule for your IP address is removed right afterwards.
+The app's identity gets **`db_datareader` and `db_datawriter` only**. It cannot create, alter or drop
+tables; nothing it does at runtime needs that (the nightly reset only deletes and inserts rows, and an
+integration test on SQL Server runs the whole demo as a login with exactly these two roles). The temporary
+firewall rule for your IP address is removed right afterwards.
+
+### Apply database migrations (whenever a change adds one)
+
+The app does not migrate the schema itself in Azure (`Database__MigrateOnStartup=false`). At startup it
+checks `__EFMigrationsHistory` and **refuses to start if a migration is pending**, so the deploy job's smoke
+test fails visibly instead of the app running against an old schema. Before approving a deployment that
+adds a migration, run the same commands as in step 4 without the grant script:
+
+```bash
+MY_IP=$(curl -s https://api.ipify.org)
+az sql server firewall-rule create -g rg-claimflow -s <sqlServerName> -n setup-temporary --start-ip-address $MY_IP --end-ip-address $MY_IP
+dotnet tool run dotnet-ef migrations script --idempotent --project src/ClaimFlow.Api \
+  --context SqlServerClaimFlowDbContext --output /tmp/migrate.sql
+sqlcmd -S <sqlServerFqdn> -d claimflow --authentication-method ActiveDirectoryAzCli -b -i /tmp/migrate.sql
+az sql server firewall-rule delete -g rg-claimflow -s <sqlServerName> -n setup-temporary
+```
+
+The script is idempotent (each migration is guarded by its ID), so running it twice is harmless. Migrations
+must stay backward compatible with the running version (add columns and tables first, remove them in a
+later release), because the old app keeps serving until the new one is deployed.
+
+Why not migrate from the pipeline? The GitHub deploy identity would then need database rights, and the
+SQL firewall would have to admit GitHub's changing runner addresses. Applying the reviewed script as the
+SQL admin keeps both the deploy identity and the runtime identity narrow, and schema changes are rare here.
 
 **Network access.** The F1 tier cannot join a virtual network or use a private endpoint, so the app reaches
 the database's public endpoint. Instead of the broad "Allow Azure services" rule (which admits any Azure
@@ -142,7 +174,7 @@ SP_ID=$(az ad sp create --id $APP_ID --query id -o tsv)
 az ad app federated-credential create --id $APP_ID --parameters '{
   "name": "github-production",
   "issuer": "https://token.actions.githubusercontent.com",
-  "subject": "repo:Ajmoylan/claimflow:environment:production",
+  "subject": "repo:Ajmoylan@197133630/claimflow@1462022359:environment:production",
   "audiences": ["api://AzureADTokenExchange"]
 }'
 WEBAPP_ID=$(az webapp show -g rg-claimflow -n <appName> --query id -o tsv)
@@ -152,6 +184,13 @@ az role assignment create --assignee-object-id $SP_ID --assignee-principal-type 
 
 The deploy identity can only deploy to this one Web App. It cannot read the database or change any
 other resource.
+
+**The subject must match GitHub's token exactly.** This repository uses GitHub's *immutable* OIDC subject
+format (`gh api repos/Ajmoylan/claimflow/actions/oidc/customization/sub` shows `use_immutable_subject: true`),
+which embeds the owner and repository IDs: `repo:<owner>@<owner-id>/<repo>@<repo-id>:environment:production`.
+The older name-only form (`repo:Ajmoylan/claimflow:environment:production`) fails with `AADSTS700213: No
+matching federated identity record found`. The ID form is also stricter: a repository later recreated under
+the same name gets a new ID and cannot use this credential.
 
 ### 6. Configure GitHub
 

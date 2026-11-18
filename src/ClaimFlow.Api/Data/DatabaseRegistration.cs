@@ -14,7 +14,11 @@ public sealed class DatabaseOptions
 
     public DatabaseProvider Provider { get; set; } = DatabaseProvider.Sqlite;
 
-    /// <summary>Apply pending migrations at startup. Fine for this single-instance demo; see README for the trade-off.</summary>
+    /// <summary>
+    /// Apply pending migrations at startup (local development and tests). In Azure this is off: the app's
+    /// identity has no schema permissions, migrations are applied by the SQL admin, and startup only checks
+    /// that none are pending.
+    /// </summary>
     public bool MigrateOnStartup { get; set; } = true;
 
     /// <summary>

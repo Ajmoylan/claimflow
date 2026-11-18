@@ -8,8 +8,15 @@ public sealed class RateLimitOptions
 {
     public const string SectionName = "RateLimiting";
 
-    /// <summary>All requests, per client IP, per minute.</summary>
+    /// <summary>API requests (<c>/api/*</c> and <c>/health</c>, the paths that reach the database), per client IP, per minute.</summary>
     public int RequestsPerMinute { get; set; } = 120;
+
+    /// <summary>
+    /// Page requests (the React app's HTML for client-side routes, <c>/docs</c>, <c>/openapi</c>), per client IP, per minute.
+    /// Counted separately, so a client that has used up its API allowance can still load the app and see a friendly message.
+    /// Built static assets (JS, CSS, images) are served before the limiter and are not counted.
+    /// </summary>
+    public int PageRequestsPerMinute { get; set; } = 300;
 
     /// <summary>Creates and status changes, per client IP, per minute.</summary>
     public int WritesPerMinute { get; set; } = 10;
@@ -20,7 +27,8 @@ public sealed class RateLimitOptions
 
 /// <summary>
 /// ASP.NET Core's built-in rate limiter, set up as three chained fixed-window limits:
-/// every request per client, writes per client, and writes from everyone combined.
+/// requests per client (with separate allowances for the API and for pages), writes per client,
+/// and writes from everyone combined.
 /// Behind App Service, ASPNETCORE_FORWARDEDHEADERS_ENABLED makes RemoteIpAddress the real client.
 /// IP addresses are only in-memory partition keys; they are never logged or stored.
 /// </summary>
@@ -35,8 +43,9 @@ public static class RateLimiting
             limiter.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
 
             limiter.GlobalLimiter = PartitionedRateLimiter.CreateChained(
-                PartitionedRateLimiter.Create<HttpContext, string>(context =>
-                    RateLimitPartition.GetFixedWindowLimiter(ClientKey(context), _ => PerMinute(options.RequestsPerMinute))),
+                PartitionedRateLimiter.Create<HttpContext, string>(context => IsApi(context)
+                    ? RateLimitPartition.GetFixedWindowLimiter("api|" + ClientKey(context), _ => PerMinute(options.RequestsPerMinute))
+                    : RateLimitPartition.GetFixedWindowLimiter("page|" + ClientKey(context), _ => PerMinute(options.PageRequestsPerMinute))),
                 PartitionedRateLimiter.Create<HttpContext, string>(context => IsWrite(context)
                     ? RateLimitPartition.GetFixedWindowLimiter(ClientKey(context), _ => PerMinute(options.WritesPerMinute))
                     : RateLimitPartition.GetNoLimiter(string.Empty)),
@@ -68,6 +77,11 @@ public static class RateLimiting
 
         return services;
     }
+
+    /// <summary>The API and the health check: the requests that do database work.</summary>
+    internal static bool IsApi(HttpContext context) =>
+        context.Request.Path.StartsWithSegments("/api", StringComparison.OrdinalIgnoreCase) ||
+        context.Request.Path.StartsWithSegments("/health", StringComparison.OrdinalIgnoreCase);
 
     internal static bool IsWrite(HttpContext context) =>
         !HttpMethods.IsGet(context.Request.Method) &&
