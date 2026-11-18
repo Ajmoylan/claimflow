@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 
 namespace ClaimFlow.Api.Data;
 
@@ -56,6 +57,9 @@ public static class DatabaseRegistration
                     .UseSqlServer(connectionString, sql =>
                         // Azure SQL serverless can be paused; retries cover the resume and other transient faults.
                         sql.EnableRetryOnFailure(maxRetryCount: 6, maxRetryDelay: TimeSpan.FromSeconds(10), errorNumbersToAdd: null))
+                    // EF logs each retry at Information, which the production log level hides. Log it as a
+                    // warning instead: it records the SQL error behind a slow request (e.g. a database resume).
+                    .ConfigureWarnings(warnings => warnings.Log((CoreEventId.ExecutionStrategyRetrying, LogLevel.Warning)))
                     .AddInterceptors(provider.GetRequiredService<SqlConnectionActivity>()));
                 if (options.ReleaseIdleConnectionsAfter > TimeSpan.Zero)
                 {
