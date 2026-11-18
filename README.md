@@ -312,14 +312,16 @@ flowchart LR
     App -->|"Managed identity<br/>(Entra ID only)"| DB[("Azure SQL Database<br/>serverless · free offer")]
 ```
 
-Defined in [`infra/main.bicep`](infra/main.bicep). Region: **Belgium Central**. The subscription
-policy allows only a few EU regions; of those, Norway East and Switzerland North restrict Azure SQL
-provisioning, and France Central has no free App Service (F1) quota for this subscription.
+Defined in [`infra/main.bicep`](infra/main.bicep). The app runs in **Belgium Central** and the database in
+**France Central**: of the regions this subscription may use, France Central is the only one offering the
+Azure SQL free tier, and it has no free App Service (F1) quota. Traffic between them costs 0.19 NOK/GB,
+well under 1 NOK a month for this demo (details in [`infra/DEPLOYMENT.md`](infra/DEPLOYMENT.md)).
 
 - **No secrets anywhere:** the app authenticates to Azure SQL with its system-assigned managed identity,
-  the SQL server only accepts Entra ID logins, and GitHub deploys through OIDC federation. Basic-auth
+  the SQL server only accepts Entra ID logins over TLS 1.2+, its firewall admits only the Web App's own
+  outbound addresses, and GitHub deploys through OIDC federation. Basic-auth
   publishing (FTP/SCM) is turned off.
-- **Expected cost: NOK 0.** The App Service F1 plan is free, and the Azure SQL free offer gives
+- **Expected cost: under 1 NOK a month** (inter-region transfer only). The App Service F1 plan is free, and the Azure SQL free offer gives
   100 000 vCore-seconds and 32 GB per month, with `freeLimitExhaustionBehavior: AutoPause` so the database
   pauses instead of billing when the allowance runs out.
 - **The database can actually pause.** ADO.NET keeps idle pooled connections open for 4–8 minutes, and a
