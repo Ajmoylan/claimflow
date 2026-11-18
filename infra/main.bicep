@@ -91,7 +91,8 @@ resource database 'Microsoft.Sql/servers/databases@2023-08-01' = {
     // When the monthly allowance is used up the database pauses instead of billing.
     useFreeLimit: true
     freeLimitExhaustionBehavior: 'AutoPause'
-    // No autoPauseDelay: Azure fixes it at 60 idle minutes for a free database with AutoPause (not configurable).
+    // No autoPauseDelay: Azure refuses any value but its default for a free database with AutoPause.
+    // It reports 60 minutes; measured, the database paused about 16 minutes after its last connection.
     minCapacity: json('0.5')
     maxSizeBytes: 34359738368 // 32 GB
     requestedBackupStorageRedundancy: 'Local'
@@ -123,7 +124,9 @@ resource app 'Microsoft.Web/sites@2024-04-01' = {
         // Lets the app see the real client IP behind App Service's front end (used for rate limiting).
         { name: 'ASPNETCORE_FORWARDEDHEADERS_ENABLED', value: 'true' }
         { name: 'Database__Provider', value: 'SqlServer' }
-        { name: 'Database__MigrateOnStartup', value: 'true' }
+        // The app's identity can only read and write data; the SQL admin applies migrations (infra/DEPLOYMENT.md).
+        // At startup the app only checks that no migration is pending.
+        { name: 'Database__MigrateOnStartup', value: 'false' }
       ]
       connectionStrings: [
         {

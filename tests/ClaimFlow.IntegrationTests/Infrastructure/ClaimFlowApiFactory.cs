@@ -41,9 +41,22 @@ public class ClaimFlowApiFactory : WebApplicationFactory<Program>, IAsyncLifetim
     {
     }
 
+    /// <summary>
+    /// Connect to this existing database instead of creating a fresh one (e.g. as a restricted login).
+    /// Set before <see cref="InitializeAsync"/>.
+    /// </summary>
+    public string? ExistingConnectionString { get; init; }
+
+    /// <summary>Settings added after <see cref="ExtraSettings"/>, for one-off factories created inside a test.</summary>
+    public IDictionary<string, string?> Settings { get; init; } = new Dictionary<string, string?>();
+
     public async ValueTask InitializeAsync()
     {
-        if (Provider == DatabaseProvider.SqlServer)
+        if (ExistingConnectionString is not null)
+        {
+            _connectionString = ExistingConnectionString;
+        }
+        else if (Provider == DatabaseProvider.SqlServer)
         {
             _connectionString = SqlServerContainer.CreateDatabaseConnectionString(_databaseName);
         }
@@ -70,7 +83,8 @@ public class ClaimFlowApiFactory : WebApplicationFactory<Program>, IAsyncLifetim
         builder.UseSetting("RateLimiting:RequestsPerMinute", "100000");
         builder.UseSetting("RateLimiting:WritesPerMinute", "100000");
         builder.UseSetting("RateLimiting:GlobalWritesPerMinute", "100000");
-        foreach (var (key, value) in ExtraSettings)
+        builder.UseSetting("RateLimiting:PageRequestsPerMinute", "100000");
+        foreach (var (key, value) in ExtraSettings.Concat(Settings))
         {
             builder.UseSetting(key, value);
         }

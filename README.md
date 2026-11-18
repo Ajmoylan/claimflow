@@ -8,7 +8,8 @@ Approved / Rejected), and every status change is recorded in an audit history.
 > It is **not** an official If Forsikring product and is not affiliated with any insurer. Every policy, claim,
 > name and amount is synthetic. Please don't enter real personal information into the demo.
 
-**Live demo:** not deployed yet. Azure deployment is planned (see [Azure architecture](#azure-architecture)).
+**Live demo:** https://claimflow-dqst3jxt3iyqy.azurewebsites.net (free Azure tier: the first visit after a quiet
+spell can take up to a minute while the app and database wake up). API reference at [`/docs`](https://claimflow-dqst3jxt3iyqy.azurewebsites.net/docs).
 
 ![Dashboard](docs/screenshots/dashboard.jpg)
 
@@ -147,10 +148,10 @@ To start again from the original example data, stop the API and delete
 | --------------------------------------- | ----------------------------------- | ----------------------------------------------------------- |
 | `Database:Provider`                     | `Sqlite`                            | `Sqlite` or `SqlServer`                                     |
 | `ConnectionStrings:ClaimFlow`           | `Data Source=claimflow.dev.db`      | Database connection                                         |
-| `Database:MigrateOnStartup`             | `true`                              | Apply EF Core migrations at startup                         |
+| `Database:MigrateOnStartup`             | `true` (`false` in Azure)           | Apply EF Core migrations at startup; when off, refuse to start if any are pending |
 | `Demo:MaxVisitorClaims`                 | `200`                               | Cap on visitor-created claims between resets                |
 | `Demo:ResetTimeOfDay` / `ResetTimeZone` | `03:00` / `Europe/Oslo`             | Nightly demo reset schedule                                 |
-| `RateLimiting:*`                        | 120 requests/min, 10 writes/min per client, 60 writes/min in total | Request limits for the public demo |
+| `RateLimiting:*`                        | 120 API requests/min and 300 page requests/min per client, 10 writes/min per client, 60 writes/min in total | Request limits for the public demo |
 
 ## API
 
@@ -285,7 +286,7 @@ CLAIMFLOW_TEST_PROVIDER=SqlServer dotnet test --project tests/ClaimFlow.Integrat
 | Suite                                  | What it covers                                                                                                                                                                                                                                                         |
 | -------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `ClaimFlow.UnitTests`                  | Every possible status transition (4×4), audit entries and versioning, the reason rule, request validation, reference generation, the nightly-reset schedule including daylight-saving changes, and seed-data consistency.                                                      |
-| `ClaimFlow.IntegrationTests`           | The real app in memory (`WebApplicationFactory`) with real migrations: create (201, `Location`, persisted, audit started), retrieval, filtering, search (including literal `%`/`_`), paging, sorting, 400/404/409/413/415/429 ProblemDetails, the full workflow, database constraints, cascades, concurrency conflicts, demo reset and limits, the nightly reset with no background service (simulating a sleeping app), rate limiting, security headers and OpenAPI. |
+| `ClaimFlow.IntegrationTests`           | The real app in memory (`WebApplicationFactory`) with real migrations: create (201, `Location`, persisted, audit started), retrieval, filtering, search (including literal `%`/`_`), paging, sorting, 400/404/409/413/415/429 ProblemDetails, the full workflow, database constraints, cascades, concurrency conflicts, demo reset and limits, the nightly reset with no background service (simulating a sleeping app), rate limiting (API and page allowances kept apart), security headers, no `Server` header, startup refusing an unmigrated schema, the whole demo running as a login without schema rights (SQL Server) and OpenAPI. |
 | `web/src/**/*.test.ts(x)`              | The API client and ProblemDetails parsing, form validation rules, server errors shown on fields, and that the workflow panel offers only allowed actions.                                                                                                             |
 
 Each integration-test class gets its own fresh database (an in-memory SQLite database, or a new database
@@ -329,10 +330,13 @@ well under 1 NOK a month for this demo (details in [`infra/DEPLOYMENT.md`](infra
   closes the pool once the app has not touched the database for 2 minutes. Nothing else polls the database:
   no health-check probe, no Always On, and the nightly-reset gate only queries when a reset is due. A CI test
   on SQL Server checks that no sessions remain after the idle period.
-- **Migrations** run at startup. That is simple and safe for a single-instance demo. A multi-instance
-  production system would apply them in the pipeline instead (for example with an EF Core migration bundle).
+- **Least-privilege database access.** The app's managed identity can only read and write rows
+  (`db_datareader`, `db_datawriter`); it cannot change the schema. Migrations are applied as an idempotent
+  SQL script by the SQL admin, and at startup the app refuses to run if one is pending. Locally and in tests
+  the app still migrates itself at startup (`Database:MigrateOnStartup`). An integration test on SQL Server
+  runs the whole demo, including the nightly reset, as a login with only those two roles.
 
-After the first deployment, the app's identity is granted database access once with
+The app's identity is granted database access once with
 [`infra/grant-app-db-access.sql`](infra/grant-app-db-access.sql).
 
 The exact deployment procedure, cost breakdown, free-tier limits and teardown are in
@@ -352,13 +356,16 @@ The public demo is anonymous, so it is built to be hard to abuse and impossible 
   timer also checks every 15 minutes while the app is awake. That covers quiet nights, but correctness does
   not depend on it, and an integration test proves the reset happens with the background service removed.
 - **Bounded writes:** a cap on visitor-created claims (200 by default) returns `429` with an explanation until
-  the next reset. On top of that, 10 writes per minute per client and 60 per minute in total, 120 requests
-  per minute per client, and a 16 KB request body limit.
+  the next reset. On top of that, 10 writes per minute per client and 60 per minute in total, 120 API
+  requests per minute per client, and a 16 KB request body limit. Pages (the React app's HTML, `/docs`) have
+  their own allowance of 300 per minute, so a client that hits the API limit still gets the app and its
+  friendly "please wait" message rather than a raw JSON error; built JS and CSS files are not counted.
 - **Read-only reference data:** visitors cannot create, edit or delete policies, and there are no admin or
   privileged endpoints.
 - **Validated input** at the API boundary and again by database constraints. Queries are parameterised,
   and search wildcards are escaped.
-- **Safe errors:** ProblemDetails without stack traces, SQL or internal type names.
+- **Safe errors:** ProblemDetails without stack traces, SQL or internal type names. Responses don't carry a
+  `Server` header naming the web server software.
 - **Browser hardening:** a strict same-origin Content-Security-Policy, `nosniff`,
   `X-Frame-Options: DENY`, `Referrer-Policy: no-referrer`, and HSTS in production. The API docs page is
   self-contained: no external fonts, telemetry or AI features.

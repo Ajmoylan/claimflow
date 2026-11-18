@@ -253,9 +253,12 @@ h3 {
 }
 
 .stat-value {
-  font-size: 1.45rem;
+  /* Shrinks on narrow phones so amounts like "889 239,50 kr" fit a half-width card;
+     very large totals wrap instead of spilling out of the card. */
+  font-size: clamp(1.05rem, 4.6vw, 1.45rem);
   font-weight: 700;
   font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
 }
 
 .stat-hint {

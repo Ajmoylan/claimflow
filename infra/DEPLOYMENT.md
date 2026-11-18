@@ -1,7 +1,8 @@
 # CLAIMFLOW: Azure deployment runbook
 
-Status: **proposed, not executed.** Nothing in this file has been run and no Azure resources exist.
-Every step that creates a resource waits for explicit approval.
+Status: **deployed on 18 Nov 2026** (app in Belgium Central, database in France Central). Live at
+https://claimflow-dqst3jxt3iyqy.azurewebsites.net. See [Deployment record](#deployment-record) for what was
+verified. Any change that creates or upgrades a resource still waits for explicit approval.
 
 ## What gets created
 
@@ -42,13 +43,15 @@ from the student credit. Each database round trip also gets a few milliseconds l
 - **App Service F1:** free, with a quota of 60 CPU minutes per day and 1 GB memory. There is no Always On, so
   the app unloads when idle and the first request after that is slow (a cold start).
 - **Azure SQL free offer:** per database, every month: 100 000 vCore-seconds, 32 GB of data and 32 GB of backup
-  storage. The database pauses automatically after **60 minutes** without connections. Azure fixes this on a free
-  database with `AutoPause` (`az sql db update --auto-pause-delay 15` is refused with "Only default value for
-  auto pause delay is allowed").
+  storage. Azure *reports* an auto-pause delay of 60 minutes and refuses to change it on a free database
+  with `AutoPause` (`az sql db update --auto-pause-delay 15`: "Only default value for auto pause delay is
+  allowed"). **Measured on 18 Nov 2026, the database paused about 16 minutes after the app released its
+  connections**, three times in a row.
   - Billing per active second is at least the 0.5 vCore minimum, so the allowance is about **55 active
-    hours per month**. Every visit keeps the database awake for its own length plus 60 minutes, so that is
-    roughly **50 well-spread visits a month** (visits within the same hour share it) before the allowance is used up.
-  - The app releases its pooled SQL connections after 2 idle minutes, so the database can start its 60-minute
+    hours per month**. A visit on its own keeps the database awake for the visit, plus 2 minutes before the
+    app releases its connections, plus about 16 minutes: roughly 20 minutes, or 600 vCore-seconds. That is
+    about **150 well-spread visits a month** (visits close together share the awake time).
+  - The app releases its pooled SQL connections after 2 idle minutes, so the database can start its pause
     pause countdown without waiting for ADO.NET's 4–8 minute pool cleanup.
   - With `freeLimitExhaustionBehavior: AutoPause` (the proposed setting), **nothing is billed**. If the
     allowance runs out, the database stays paused until the 1st of the next month, and the demo shows a
@@ -112,19 +115,50 @@ az appservice plan show -g rg-claimflow -n claimflow-plan --query sku.name
 
 Expected: `useFreeLimit: true`, `onExhaustion: AutoPause`, plan `F1`.
 
-### 4. Give the app's managed identity access to the database (one time)
+### 4. Create the schema and give the app's managed identity data access (one time)
 
 ```bash
 brew install sqlcmd   # Microsoft's go-sqlcmd
 MY_IP=$(curl -s https://api.ipify.org)
 az sql server firewall-rule create -g rg-claimflow -s <sqlServerName> -n setup-temporary --start-ip-address $MY_IP --end-ip-address $MY_IP
+# Schema: applied by you, the SQL admin (see "Apply database migrations" below)
+dotnet tool run dotnet-ef migrations script --idempotent --project src/ClaimFlow.Api \
+  --context SqlServerClaimFlowDbContext --output /tmp/migrate.sql
+sqlcmd -S <sqlServerFqdn> -d claimflow --authentication-method ActiveDirectoryAzCli -b -i /tmp/migrate.sql
+# Data access for the app
 sed "s/<app-name>/<appName>/g" infra/grant-app-db-access.sql > /tmp/grant.sql
-sqlcmd -S <sqlServerFqdn> -d claimflow --authentication-method ActiveDirectoryAzCli -i /tmp/grant.sql
+sqlcmd -S <sqlServerFqdn> -d claimflow --authentication-method ActiveDirectoryAzCli -b -i /tmp/grant.sql
 az sql server firewall-rule delete -g rg-claimflow -s <sqlServerName> -n setup-temporary
 ```
 
-This grants `db_datareader`, `db_datawriter` and `db_ddladmin` (the app applies its EF Core migrations at
-startup). The temporary firewall rule for your IP address is removed right afterwards.
+The app's identity gets **`db_datareader` and `db_datawriter` only**. It cannot create, alter or drop
+tables; nothing it does at runtime needs that (the nightly reset only deletes and inserts rows, and an
+integration test on SQL Server runs the whole demo as a login with exactly these two roles). The temporary
+firewall rule for your IP address is removed right afterwards.
+
+### Apply database migrations (whenever a change adds one)
+
+The app does not migrate the schema itself in Azure (`Database__MigrateOnStartup=false`). At startup it
+checks `__EFMigrationsHistory` and **refuses to start if a migration is pending**, so the deploy job's smoke
+test fails visibly instead of the app running against an old schema. Before approving a deployment that
+adds a migration, run the same commands as in step 4 without the grant script:
+
+```bash
+MY_IP=$(curl -s https://api.ipify.org)
+az sql server firewall-rule create -g rg-claimflow -s <sqlServerName> -n setup-temporary --start-ip-address $MY_IP --end-ip-address $MY_IP
+dotnet tool run dotnet-ef migrations script --idempotent --project src/ClaimFlow.Api \
+  --context SqlServerClaimFlowDbContext --output /tmp/migrate.sql
+sqlcmd -S <sqlServerFqdn> -d claimflow --authentication-method ActiveDirectoryAzCli -b -i /tmp/migrate.sql
+az sql server firewall-rule delete -g rg-claimflow -s <sqlServerName> -n setup-temporary
+```
+
+The script is idempotent (each migration is guarded by its ID), so running it twice is harmless. Migrations
+must stay backward compatible with the running version (add columns and tables first, remove them in a
+later release), because the old app keeps serving until the new one is deployed.
+
+Why not migrate from the pipeline? The GitHub deploy identity would then need database rights, and the
+SQL firewall would have to admit GitHub's changing runner addresses. Applying the reviewed script as the
+SQL admin keeps both the deploy identity and the runtime identity narrow, and schema changes are rare here.
 
 **Network access.** The F1 tier cannot join a virtual network or use a private endpoint, so the app reaches
 the database's public endpoint. Instead of the broad "Allow Azure services" rule (which admits any Azure
@@ -142,7 +176,7 @@ SP_ID=$(az ad sp create --id $APP_ID --query id -o tsv)
 az ad app federated-credential create --id $APP_ID --parameters '{
   "name": "github-production",
   "issuer": "https://token.actions.githubusercontent.com",
-  "subject": "repo:Ajmoylan/claimflow:environment:production",
+  "subject": "repo:Ajmoylan@197133630/claimflow@1462022359:environment:production",
   "audiences": ["api://AzureADTokenExchange"]
 }'
 WEBAPP_ID=$(az webapp show -g rg-claimflow -n <appName> --query id -o tsv)
@@ -152,6 +186,13 @@ az role assignment create --assignee-object-id $SP_ID --assignee-principal-type 
 
 The deploy identity can only deploy to this one Web App. It cannot read the database or change any
 other resource.
+
+**The subject must match GitHub's token exactly.** This repository uses GitHub's *immutable* OIDC subject
+format (`gh api repos/Ajmoylan/claimflow/actions/oidc/customization/sub` shows `use_immutable_subject: true`),
+which embeds the owner and repository IDs: `repo:<owner>@<owner-id>/<repo>@<repo-id>:environment:production`.
+The older name-only form (`repo:Ajmoylan/claimflow:environment:production`) fails with `AADSTS700213: No
+matching federated identity record found`. The ID form is also stricter: a repository later recreated under
+the same name gets a new ID and cannot use this credential.
 
 ### 6. Configure GitHub
 
@@ -172,6 +213,48 @@ built and tested in that same run, and smoke-tests `/health` and `/api/dashboard
   managed-identity connection string.
 - Logs (`az webapp log tail`) are JSON, with no personal data.
 - After the first visit following 03:00 Oslo time, the data has been reset.
+
+## Deployment record
+
+Deployed 18 Nov 2026 from `main` by the CI `deploy` job (approved in the `production` environment).
+
+**Resources, as Azure reports them**
+
+| Resource | Region | Configuration |
+|---|---|---|
+| App Service plan `claimflow-plan` | Belgium Central | F1 (Free), Linux |
+| Web App `claimflow-dqst3jxt3iyqy` | Belgium Central | .NET 10, HTTPS only, TLS 1.2, FTP and SCM basic auth off, system-assigned managed identity |
+| SQL server `claimflow-sql-dqst3jxt3iyqy` | France Central | Entra ID-only, TLS 1.2, 31 firewall rules (one per Web App outbound IPv4), no `0.0.0.0` rule |
+| Database `claimflow` | France Central | GP_S_Gen5, 0.5–2 vCores, 32 GB, LRS backup, `useFreeLimit: true`, `freeLimitExhaustionBehavior: AutoPause` |
+| App registration `claimflow-github-deploy` | (tenant) | No client secret; one federated credential (immutable subject, `production` environment); Website Contributor on the Web App only |
+
+Container stdout logging to the App Service file system is on (3 days, 100 MB cap; free).
+
+**Cost:** Cost Management shows 0 NOK month to date for `rg-claimflow`. The only expected charge is
+inter-region transfer between the app and the database (0.19 NOK/GB), well under 1 NOK a month.
+
+**Live tests (18 Nov 2026)**
+
+- API, 27/27 checks: reads, search and filters (literal `%`), create (201 + `Location`), the full workflow
+  including 409 for skipped or final states and 400 for a rejection without a reason, audit history,
+  validation, expired and unknown policies, malformed JSON, 413 over 16 KB.
+- Browser, desktop and 375 px mobile: dashboard, list and filters, create through the form, review and
+  reject with a reason in the UI, audit history; no horizontal page scroll; form inputs at 16 px.
+- Security: CSP, HSTS, nosniff, `X-Frame-Options: DENY`; HTTP redirects to HTTPS; TLS 1.0 and 1.1 refused;
+  no config or DLL files served; Kudu basic auth refused (401); no CORS; the SQL server refuses this
+  developer's IP (error 40615); 120 API requests/min then 429; writes 429 with `Retry-After: 60`.
+
+**Database cold starts** (database paused, first visit afterwards):
+
+| Run | What the visitor saw | Server side |
+|---|---|---|
+| 1 (dashboard, browser) | App shell in 1.5 s with "Loading dashboard… (the demo database may take a few seconds to wake up)"; data after about 68 s | First API call returned 500 after 8.3 s; the frontend's automatic retry succeeded after 56 s. Container logging was not yet on, so the exception was not captured. |
+| 2 (`curl`, dashboard API) | 200 after 52.9 s | First connection attempt failed after about 42 s; EF Core retried and succeeded |
+| 3 (claims list, browser) | Filters at once, "Loading…", then the list after 56.8 s | Same as run 2: one failed attempt, then success |
+
+A resume takes about 55 seconds. The page never breaks: it shows its loading message while the
+server-side retries (EF Core, up to 6) and the frontend's retries (up to 2 for 5xx and network errors) run.
+EF Core retries are logged as warnings, so if the run-1 500 happens again its SQL error is in the log.
 
 ## Teardown (removes everything, stops all cost)
 
