@@ -91,7 +91,8 @@ resource database 'Microsoft.Sql/servers/databases@2023-08-01' = {
     // When the monthly allowance is used up the database pauses instead of billing.
     useFreeLimit: true
     freeLimitExhaustionBehavior: 'AutoPause'
-    // No autoPauseDelay: Azure fixes it at 60 idle minutes for a free database with AutoPause (not configurable).
+    // No autoPauseDelay: Azure refuses any value but its default for a free database with AutoPause.
+    // It reports 60 minutes; measured, the database paused about 16 minutes after its last connection.
     minCapacity: json('0.5')
     maxSizeBytes: 34359738368 // 32 GB
     requestedBackupStorageRedundancy: 'Local'

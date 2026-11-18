@@ -43,13 +43,15 @@ from the student credit. Each database round trip also gets a few milliseconds l
 - **App Service F1:** free, with a quota of 60 CPU minutes per day and 1 GB memory. There is no Always On, so
   the app unloads when idle and the first request after that is slow (a cold start).
 - **Azure SQL free offer:** per database, every month: 100 000 vCore-seconds, 32 GB of data and 32 GB of backup
-  storage. The database pauses automatically after **60 minutes** without connections. Azure fixes this on a free
-  database with `AutoPause` (`az sql db update --auto-pause-delay 15` is refused with "Only default value for
-  auto pause delay is allowed").
+  storage. Azure *reports* an auto-pause delay of 60 minutes and refuses to change it on a free database
+  with `AutoPause` (`az sql db update --auto-pause-delay 15`: "Only default value for auto pause delay is
+  allowed"). **Measured on 18 Nov 2026, the database paused about 16 minutes after the app released its
+  connections**, three times in a row.
   - Billing per active second is at least the 0.5 vCore minimum, so the allowance is about **55 active
-    hours per month**. Every visit keeps the database awake for its own length plus 60 minutes, so that is
-    roughly **50 well-spread visits a month** (visits within the same hour share it) before the allowance is used up.
-  - The app releases its pooled SQL connections after 2 idle minutes, so the database can start its 60-minute
+    hours per month**. A visit on its own keeps the database awake for the visit, plus 2 minutes before the
+    app releases its connections, plus about 16 minutes: roughly 20 minutes, or 600 vCore-seconds. That is
+    about **150 well-spread visits a month** (visits close together share the awake time).
+  - The app releases its pooled SQL connections after 2 idle minutes, so the database can start its pause
     pause countdown without waiting for ADO.NET's 4–8 minute pool cleanup.
   - With `freeLimitExhaustionBehavior: AutoPause` (the proposed setting), **nothing is billed**. If the
     allowance runs out, the database stays paused until the 1st of the next month, and the demo shows a
@@ -211,6 +213,48 @@ built and tested in that same run, and smoke-tests `/health` and `/api/dashboard
   managed-identity connection string.
 - Logs (`az webapp log tail`) are JSON, with no personal data.
 - After the first visit following 03:00 Oslo time, the data has been reset.
+
+## Deployment record
+
+Deployed 18 Nov 2026 from `main` by the CI `deploy` job (approved in the `production` environment).
+
+**Resources, as Azure reports them**
+
+| Resource | Region | Configuration |
+|---|---|---|
+| App Service plan `claimflow-plan` | Belgium Central | F1 (Free), Linux |
+| Web App `claimflow-dqst3jxt3iyqy` | Belgium Central | .NET 10, HTTPS only, TLS 1.2, FTP and SCM basic auth off, system-assigned managed identity |
+| SQL server `claimflow-sql-dqst3jxt3iyqy` | France Central | Entra ID-only, TLS 1.2, 31 firewall rules (one per Web App outbound IPv4), no `0.0.0.0` rule |
+| Database `claimflow` | France Central | GP_S_Gen5, 0.5–2 vCores, 32 GB, LRS backup, `useFreeLimit: true`, `freeLimitExhaustionBehavior: AutoPause` |
+| App registration `claimflow-github-deploy` | (tenant) | No client secret; one federated credential (immutable subject, `production` environment); Website Contributor on the Web App only |
+
+Container stdout logging to the App Service file system is on (3 days, 100 MB cap; free).
+
+**Cost:** Cost Management shows 0 NOK month to date for `rg-claimflow`. The only expected charge is
+inter-region transfer between the app and the database (0.19 NOK/GB), well under 1 NOK a month.
+
+**Live tests (18 Nov 2026)**
+
+- API, 27/27 checks: reads, search and filters (literal `%`), create (201 + `Location`), the full workflow
+  including 409 for skipped or final states and 400 for a rejection without a reason, audit history,
+  validation, expired and unknown policies, malformed JSON, 413 over 16 KB.
+- Browser, desktop and 375 px mobile: dashboard, list and filters, create through the form, review and
+  reject with a reason in the UI, audit history; no horizontal page scroll; form inputs at 16 px.
+- Security: CSP, HSTS, nosniff, `X-Frame-Options: DENY`; HTTP redirects to HTTPS; TLS 1.0 and 1.1 refused;
+  no config or DLL files served; Kudu basic auth refused (401); no CORS; the SQL server refuses this
+  developer's IP (error 40615); 120 API requests/min then 429; writes 429 with `Retry-After: 60`.
+
+**Database cold starts** (database paused, first visit afterwards):
+
+| Run | What the visitor saw | Server side |
+|---|---|---|
+| 1 (dashboard, browser) | App shell in 1.5 s with "Loading dashboard… (the demo database may take a few seconds to wake up)"; data after about 68 s | First API call returned 500 after 8.3 s; the frontend's automatic retry succeeded after 56 s. Container logging was not yet on, so the exception was not captured. |
+| 2 (`curl`, dashboard API) | 200 after 52.9 s | First connection attempt failed after about 42 s; EF Core retried and succeeded |
+| 3 (claims list, browser) | Filters at once, "Loading…", then the list after 56.8 s | Same as run 2: one failed attempt, then success |
+
+A resume takes about 55 seconds. The page never breaks: it shows its loading message while the
+server-side retries (EF Core, up to 6) and the frontend's retries (up to 2 for 5xx and network errors) run.
+EF Core retries are logged as warnings, so if the run-1 500 happens again its SQL error is in the log.
 
 ## Teardown (removes everything, stops all cost)
 
