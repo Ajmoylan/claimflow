@@ -22,8 +22,9 @@ public class IdleConnectionTests(ClaimFlowApiFactory factory) : IntegrationTestB
 
         Assert.False(releaser.ReleaseIfIdle()); // just used: keep the pool warm
 
+        // Let three idle minutes pass. The releaser's own background timer (on the fake clock) does the rest;
+        // nothing in the test calls it, so this proves the hosted service releases the pool by itself.
         Factory.Clock.Advance(TimeSpan.FromMinutes(3));
-        Assert.True(releaser.ReleaseIfIdle());
 
         Assert.Equal(0, await WaitForSessionsAsync(expected: 0));
 
