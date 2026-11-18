@@ -42,11 +42,13 @@ from the student credit. Each database round trip also gets a few milliseconds l
 - **App Service F1:** free, with a quota of 60 CPU minutes per day and 1 GB memory. There is no Always On, so
   the app unloads when idle and the first request after that is slow (a cold start).
 - **Azure SQL free offer:** per database, every month: 100 000 vCore-seconds, 32 GB of data and 32 GB of backup
-  storage. The database pauses automatically after **15 minutes** without connections (fixed on the free tier).
+  storage. The database pauses automatically after **60 minutes** without connections. Azure fixes this on a free
+  database with `AutoPause` (`az sql db update --auto-pause-delay 15` is refused with "Only default value for
+  auto pause delay is allowed").
   - Billing per active second is at least the 0.5 vCore minimum, so the allowance is about **55 active
-    hours per month**. Every visit keeps the database awake for its own length plus 15 minutes, so that is
-    roughly **150–200 visits a month** before the allowance is used up.
-  - The app releases its pooled SQL connections after 2 idle minutes, so the database can start its 15-minute
+    hours per month**. Every visit keeps the database awake for its own length plus 60 minutes, so that is
+    roughly **50 well-spread visits a month** (visits within the same hour share it) before the allowance is used up.
+  - The app releases its pooled SQL connections after 2 idle minutes, so the database can start its 60-minute
     pause countdown without waiting for ADO.NET's 4–8 minute pool cleanup.
   - With `freeLimitExhaustionBehavior: AutoPause` (the proposed setting), **nothing is billed**. If the
     allowance runs out, the database stays paused until the 1st of the next month, and the demo shows a
