@@ -30,6 +30,9 @@ public class ClaimFlowApiFactory : WebApplicationFactory<Program>, IAsyncLifetim
 
     public DatabaseProvider Provider { get; } = TestDatabase.Provider;
 
+    /// <summary>Connection string of this factory's own test database.</summary>
+    public string ConnectionString => _connectionString;
+
     /// <summary>Extra configuration a derived factory wants (e.g. lower limits).</summary>
     protected virtual IDictionary<string, string?> ExtraSettings => new Dictionary<string, string?>();
 

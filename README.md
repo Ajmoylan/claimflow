@@ -272,7 +272,7 @@ Provider differences that were handled deliberately:
 ## Testing
 
 ```bash
-dotnet test                       # 106 tests: 53 unit + 53 integration (SQLite)
+dotnet test                       # 108 tests: 53 unit + 55 integration (1 is SQL Server-only and skipped on SQLite)
 cd web && npm test                # 13 frontend tests (Vitest + Testing Library)
 ```
 
@@ -322,6 +322,11 @@ Switzerland North for this subscription.
 - **Expected cost: NOK 0.** The App Service F1 plan is free, and the Azure SQL free offer gives
   100 000 vCore-seconds and 32 GB per month, with `freeLimitExhaustionBehavior: AutoPause` so the database
   pauses instead of billing when the allowance runs out.
+- **The database can actually pause.** ADO.NET keeps idle pooled connections open for 4–8 minutes, and a
+  serverless database only pauses after its auto-pause delay with zero sessions. `IdleSqlConnectionReleaser`
+  closes the pool once the app has not touched the database for 2 minutes. Nothing else polls the database:
+  no health-check probe, no Always On, and the nightly-reset gate only queries when a reset is due. A CI test
+  on SQL Server checks that no sessions remain after the idle period.
 - **Migrations** run at startup. That is simple and safe for a single-instance demo. A multi-instance
   production system would apply them in the pipeline instead (for example with an EF Core migration bundle).
 

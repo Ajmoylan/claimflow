@@ -16,6 +16,12 @@ public sealed class DatabaseOptions
 
     /// <summary>Apply pending migrations at startup. Fine for this single-instance demo; see README for the trade-off.</summary>
     public bool MigrateOnStartup { get; set; } = true;
+
+    /// <summary>
+    /// SQL Server only: close pooled connections after this long without database activity, so an
+    /// Azure SQL serverless database sees zero sessions and can auto-pause. Zero disables it.
+    /// </summary>
+    public TimeSpan ReleaseIdleConnectionsAfter { get; set; } = TimeSpan.FromMinutes(2);
 }
 
 public static class DatabaseRegistration
@@ -41,10 +47,18 @@ public static class DatabaseRegistration
                 break;
 
             case DatabaseProvider.SqlServer:
-                services.AddDbContext<ClaimFlowDbContext, SqlServerClaimFlowDbContext>(db =>
-                    db.UseSqlServer(connectionString, sql =>
+                services.AddSingleton<SqlConnectionActivity>();
+                services.AddDbContext<ClaimFlowDbContext, SqlServerClaimFlowDbContext>((provider, db) => db
+                    .UseSqlServer(connectionString, sql =>
                         // Azure SQL serverless can be paused; retries cover the resume and other transient faults.
-                        sql.EnableRetryOnFailure(maxRetryCount: 6, maxRetryDelay: TimeSpan.FromSeconds(10), errorNumbersToAdd: null)));
+                        sql.EnableRetryOnFailure(maxRetryCount: 6, maxRetryDelay: TimeSpan.FromSeconds(10), errorNumbersToAdd: null))
+                    .AddInterceptors(provider.GetRequiredService<SqlConnectionActivity>()));
+                if (options.ReleaseIdleConnectionsAfter > TimeSpan.Zero)
+                {
+                    services.AddSingleton<IdleSqlConnectionReleaser>();
+                    services.AddHostedService(provider => provider.GetRequiredService<IdleSqlConnectionReleaser>());
+                }
+
                 break;
 
             default:
