@@ -9,7 +9,7 @@
 
 targetScope = 'resourceGroup'
 
-@description('Azure region. The subscription policy only allows a few regions; Azure SQL provisioning was available in francecentral.')
+@description('Azure region. The subscription policy only allows a few regions; F1 quota and Azure SQL (including the free offer) are available in belgiumcentral.')
 param location string = resourceGroup().location
 
 @description('Short lowercase prefix used in resource names.')

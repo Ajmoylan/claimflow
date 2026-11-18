@@ -1,6 +1,6 @@
 using './main.bicep'
 
-param location = 'francecentral'
+param location = 'belgiumcentral'
 param namePrefix = 'claimflow'
 param appServiceSku = 'F1'
 
